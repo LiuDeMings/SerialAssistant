@@ -17,12 +17,13 @@ namespace SerialAssistant
         private long receive_count = 0; //接收字节计数
         private long send_count = 0;    //发送字节计数
         private StringBuilder sb = new StringBuilder();    //为了避免在接收处理函数中反复调用，依然声明为一个全局变量
-        private DateTime current_time = new DateTime();    //为了避免在接收处理函数中反复调用，依然声明为一个全局变量
-        private bool is_need_time = true; 
+
 
         public Form1()
         {
             InitializeComponent();
+            timer3.Interval = 10;
+            timer3.Start();
         }
 
         private bool search_port_is_exist(String item, String[] port_list)
@@ -56,8 +57,6 @@ namespace SerialAssistant
                 }
                 else
                 {
-                    //combox中有内容
-
                     //判断有无新插入的串口
                     for (int i = 0; i < cur_port_list.Length; i++)
                     {
@@ -93,8 +92,6 @@ namespace SerialAssistant
                     //无可用列表，清空文本值
                     comboBox1.Text = "";
                 }
-
-
             }
             catch (Exception)
             {
@@ -125,14 +122,9 @@ namespace SerialAssistant
             string[] stop_length = { "1", "1.5", "2" };
             comboBox5.Items.AddRange(stop_length);
 
-            /* 设置默认选择值 */
-            comboBox2.Text = "115200";
-            comboBox3.Text = "8";
-            comboBox4.Text = "None";
-            comboBox5.Text = "1";
 
-            /* 在串口未打开的情况下每隔1s刷新一次串口列表框 */
-            timer1.Interval = 1000;
+            /* 在串口未打开的情况下每隔500ms刷新一次串口列表框 */
+            timer1.Interval = 500;
             timer1.Start();
         }
 
@@ -161,9 +153,6 @@ namespace SerialAssistant
                     comboBox5.Enabled = true;
                     label6.Text = "串口已关闭!";
                     label6.ForeColor = Color.Red;
-                    button5.Enabled = false;        //失能发送按钮
-                    checkBox4.Enabled = false;
-
 
                     //开启端口扫描
                     timer1.Interval = 1000;
@@ -180,7 +169,7 @@ namespace SerialAssistant
                     comboBox3.Enabled = false;
                     comboBox4.Enabled = false;
                     comboBox5.Enabled = false;
-                    checkBox4.Enabled = true;
+
                     serialPort1.PortName = comboBox1.Text;
                     serialPort1.BaudRate = Convert.ToInt32(comboBox2.Text);
                     serialPort1.DataBits = Convert.ToInt16(comboBox3.Text);
@@ -209,9 +198,6 @@ namespace SerialAssistant
                     label6.Text = "串口已打开!";
                     label6.ForeColor = Color.Green;
 
-                    //使能发送按钮
-                    button5.Enabled = true;
-
                 }
             }
             catch (Exception ex)
@@ -233,70 +219,58 @@ namespace SerialAssistant
                 comboBox5.Enabled = true;
                 label6.Text = "串口已关闭!";
                 label6.ForeColor = Color.Red;
-                button5.Enabled = false;        //失能发送按钮
-                checkBox4.Enabled = false;
 
                 //开启串口扫描
-                timer1.Interval = 1000;
+                timer1.Interval = 500;
                 timer1.Start();
             }
         }
-
-        private void serialPort1_DataReceived(object sender, System.IO.Ports.SerialDataReceivedEventArgs e)
+        List<byte> buffer = new List<byte>(1024);
+        private void serialPort1_DataReceived(object sender, System.IO.Ports.SerialDataReceivedEventArgs e) 
         {
-            /* 串口接收事件处理 */
-
-            /* 刷新定时器 */
-            if (checkBox3.Checked)
-            {
-                timer3.Interval = (int)numericUpDown2.Value;
-            }
-
 
             int num = serialPort1.BytesToRead;      //获取接收缓冲区中的字节数
-            byte[] received_buf = new byte[num];    //声明一个大小为num的字节数据用于存放读出的byte型数据
+            byte[] buf = new byte[num];             //声明一个大小为num的字节数据用于存放读出的byte型数据
 
 
             receive_count += num;                   //接收字节计数变量增加nun
-            serialPort1.Read(received_buf, 0, num);   //读取接收缓冲区中num个字节到byte数组中
+            serialPort1.Read(buf, 0, num);          //读取接收缓冲区中num个字节到byte数组中
 
-            sb.Clear();     //防止出错,首先清空字符串构造器
+            buffer.AddRange(buf);                   //不断地将接收到的数据加入到buffer链表中
 
-            if (radioButton2.Checked)
-            {
-                //选中HEX模式显示
-                foreach (byte b in received_buf)
-                {
-                    sb.Append(b.ToString("X2") + ' ');    //将byte型数据转化为2位16进制文本显示，并用空格隔开
-                }
-            }
-            else
-            {
-                //选中ASCII模式显示
-                sb.Append(Encoding.ASCII.GetString(received_buf));  //将整个数组解码为ASCII数组
-            }
             try
             {
-                //因为要访问UI资源，所以需要使用invoke方式同步ui
-                Invoke((EventHandler)(delegate
+                while (buffer.Count >= 4)
                 {
-                    if (is_need_time && checkBox3.Checked)
+
+                    if (buffer[0] == 0x10 && buffer[1] == 0x10) //传输数据有帧头，用于判断
                     {
-                        /* 需要加时间戳 */
-                        is_need_time = false;   //清空标志位
-                        current_time = System.DateTime.Now;     //获取当前时间
-                        textBox1.AppendText("\r\n[" + current_time.ToString("HH:mm:ss") + "]" + sb.ToString());
+
+
+                        if (buffer.Count < 7) //数据区尚未接收完整
+                        {
+                            break;
+                        }
+                        Invoke((EventHandler)(delegate
+                        {
+                            //for (UInt16 i = 0; i < buffer.Count; i++)
+                            //{
+                            //    textBox3.AppendText(i.ToString() + "=" + buffer[i].ToString() + "  ");
+
+                            //}
+                            RxDataProcess(buffer.ToArray(), buffer.Count);
+                            buffer.RemoveRange(0, 7);
+                        }
+                     )
+                     );
                     }
                     else
                     {
-                        /* 不需要时间戳 */
-                        textBox1.AppendText(sb.ToString());
+                        buffer.RemoveAt(0);//清除第一个字节，继续检测下一个。
                     }
 
-                    label8.Text = "接收：" + receive_count.ToString() + " Bytes";
+
                 }
-                  )
-                );
             }
             catch (Exception ex)
             {
@@ -316,166 +290,50 @@ namespace SerialAssistant
             label7.Text = "发送：" + receive_count.ToString() + " Bytes";
         }
 
-        private void button5_Click(object sender, EventArgs e)
+        public void RxDataProcess(byte[] buff, int len)
         {
-            /* 发送发送区中的数据 */
-
-            byte[] temp = new byte[1];
-
-            try
+            //textBox3.AppendText("\r\n");
+            //for (UInt16 i = 0; i < len; i++)           //打印获取的数据
+            //{
+            //    textBox3.AppendText(i.ToString("X2") + "=" + buff[i].ToString() + " ");
+            //}
+            //textBox3.AppendText("\r\n");
+            if (len != 8)      //数据长度检查
             {
-                //首先判断串口是否开启
-                if (serialPort1.IsOpen)
-                {
-                    int num = 0;   //获取本次发送字节数
-
-                    //判断发送模式
-                    if (radioButton4.Checked)
-                    {
-                        //以HEX模式发送
-                        //首先需要用正则表达式将用户输入字符中的十六进制字符匹配出来
-                        string buf = textBox2.Text;
-                        string pattern = @"\s";
-                        string replacement = "";
-                        Regex rgx = new Regex(pattern);
-                        string send_data = rgx.Replace(buf, replacement);
-
-                        //不发送新行
-                        num = (send_data.Length - send_data.Length % 2) / 2;
-                        for (int i = 0; i < num; i++)
-                        {
-                            temp[0] = Convert.ToByte(send_data.Substring(i * 2, 2), 16);
-                            serialPort1.Write(temp, 0, 1);  //循环发送
-                        }
-                        //如果用户输入的字符是奇数，则单独处理
-                        if (send_data.Length % 2 != 0)
-                        {
-                            temp[0] = Convert.ToByte(send_data.Substring(textBox2.Text.Length - 1, 1), 16);
-                            serialPort1.Write(temp, 0, 1);
-                            num++;
-                        }
-                        //判断是否需要发送新行
-                        if (checkBox2.Checked)
-                        {
-                            //自动发送新行
-                            serialPort1.WriteLine("");
-                        }
-                    }
-                    else
-                    {
-                        //以ASCII模式发送
-                        //判断是否需要发送新行
-                        if (checkBox2.Checked)
-                        {
-                            //自动发送新行
-                            serialPort1.WriteLine(textBox2.Text);
-                            num = textBox2.Text.Length + 2; //回车占两个字节
-                        }
-                        else
-                        {
-                            //不发送新行
-                            serialPort1.Write(textBox2.Text);
-                            num = textBox2.Text.Length;
-                        }
-                    }
-
-                    send_count += num;      //计数变量累加
-                    label7.Text = "发送：" + send_count.ToString() + " Bytes";   //刷新界面
-
-                    /* 记录发送数据 */
-                    //先检查当前是否存在该项
-                    if (comboBox7.Items.Contains(textBox2.Text) == true)
-                    {
-                        return;
-                    }
-                    else
-                    {
-                        comboBox7.Items.Add(textBox2.Text);
-                    }
-
-                }
-            }
-            catch (Exception ex)
-            {
-                serialPort1.Close();
-                //捕获到异常，创建一个新的对象，之前的不可以再用
-                serialPort1 = new System.IO.Ports.SerialPort();
-                //刷新COM口选项
-                comboBox1.Items.Clear();
-                comboBox1.Items.AddRange(System.IO.Ports.SerialPort.GetPortNames());
-                //响铃并显示异常给用户
-                System.Media.SystemSounds.Beep.Play();
-                button1.Text = "打开串口";
-                MessageBox.Show(ex.Message);
-                comboBox1.Enabled = true;
-                comboBox2.Enabled = true;
-                comboBox3.Enabled = true;
-                comboBox4.Enabled = true;
-                comboBox5.Enabled = true;
-                checkBox2.Enabled = false;
-            }
-        }
-
-        private void button4_Click(object sender, EventArgs e)
-        {
-            DateTime time = new DateTime();
-            String fileName;
-            string foldPath;
-
-            /* 获取当前接收区内容 */
-            String recv_data = textBox1.Text;
-            if (recv_data.Equals(""))
-            {
-                MessageBox.Show("接收数据为空，无需保存！");
+                textBox3.AppendText("len=" + len.ToString());
                 return;
             }
 
-            /* 获取当前时间，用于填充文件名 */
-            //eg.log_2021_05_08_10_13_31.txt
-            time = System.DateTime.Now;
-
-            /* 弹出文件夹选择框供用户选择 */
-            FolderBrowserDialog dialog = new FolderBrowserDialog();
-            dialog.Description = "请选择日志文件存储路径";
-            if (dialog.ShowDialog() == DialogResult.OK)
+            UInt16 head = (UInt16)(Convert.ToUInt32(MessageHeadBox.Text, 16));  //数据头检查
+            if (buff[0] != (Byte)((head >> 8) & 0xff) || buff[1] != (Byte)((head >> 8) & 0xff))
             {
-                foldPath = dialog.SelectedPath;
+                return;
             }
-            else
+            UInt16 crc_check = Crc16(buff, 6);;          //CRC16校验码  
+            UInt16 rx_crc = (UInt16)(buff[6] + (buff[7] << 8));
+            //  textBox3.AppendText("crc_sum="+ crc_check.ToString());
+            //  textBox3.AppendText("get crc_sum=" + rx_crc.ToString());
+            if (rx_crc != crc_check)
             {
                 return;
             }
 
-            fileName = foldPath + "\\" + "log" + "_" + time.ToString("yyyy_MM_dd_HH_mm_ss") + ".txt";
+            rx_index = (UInt16)(buff[2] + (buff[3] << 8));
 
-            try
-            {
-                /* 保存串口接收区的内容 */
-                //创建 FileStream 类的实例
-                FileStream fileStream = new FileStream(fileName, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite);
+            if (rx_index == 0)  mcu_ready_ok = 1;                   //下位机完成升级准备
+            if (rx_index == pack_count) update_status = 4;          //下位机完成升级
+            rx_flag = 1;                                            //接收到返回数据，标志置1
+            rx_time = System.DateTime.Now;                          //获取当前时间
+            failed_transmit_cnt = 0;
+            textBox3.AppendText("\r\n[" + rx_time.ToString("HH:mm:ss:fff") + "]" + ":收到第 " + rx_index.ToString() + " 包数据反馈");
+            TimeSpan span = (TimeSpan)(rx_time - tx_time);
+            textBox3.AppendText("\r\ndelta=" + span.Milliseconds.ToString());
+ 
 
-                //将字符串转换为字节数组
-                byte[] bytes = Encoding.UTF8.GetBytes(recv_data);
-
-                //向文件中写入字节数组
-                fileStream.Write(bytes, 0, bytes.Length);
-
-                //刷新缓冲区
-                fileStream.Flush();
-
-                //关闭流
-                fileStream.Close();
-
-                //提示用户
-                MessageBox.Show("日志已保存!(" + fileName + ")");
-            }
-            catch (Exception ex)
-            {
-                //提示用户
-                MessageBox.Show("发生异常!(" + ex.ToString() + ")");
-            }
+         
 
         }
+
 
         private void button3_Click(object sender, EventArgs e)
         {
@@ -485,7 +343,7 @@ namespace SerialAssistant
             OpenFileDialog dialog = new OpenFileDialog();
             dialog.Multiselect = false;//该值确定是否可以选择多个文件
             dialog.Title = "请选择要加载的文件(文本格式)";
-            dialog.Filter = "文本文件(*.txt)|*.txt|JSON文件(*.json)|*.json";
+            dialog.Filter = "文本文件(*.txt)|*.txt|Bin文件(*.bin)|*.bin";
             if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
             {
                 file = dialog.FileName;
@@ -495,35 +353,13 @@ namespace SerialAssistant
                 return;
             }
 
-            /* 读取文件内容 */
-            try
-            {
-                //清空发送缓冲区
-                textBox2.Text = "";
-
-                // 使用 StreamReader 来读取文件
-                using (StreamReader sr = new StreamReader(file))
-                {
-                    string line;
-
-                    // 从文件读取并显示行，直到文件的末尾 
-                    while ((line = sr.ReadLine()) != null)
-                    {
-                        line = line + "\r\n";
-                        textBox2.AppendText(line);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show("加载文件发生异常！(" + ex.ToString() + ")");
-            }
         }
 
         private void button6_Click(object sender, EventArgs e)
         {
             //清空发送缓冲区
             textBox2.Text = "";
+            textBox3.Text = "";
         }
 
         private void comboBox7_SelectedIndexChanged(object sender, EventArgs e)
@@ -532,136 +368,280 @@ namespace SerialAssistant
             textBox2.Text = comboBox7.SelectedItem.ToString();
         }
 
-        private void panel10_Click(object sender, EventArgs e)
-        {
-
-        }
-
-        private void linkLabel1_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
-        {
-            this.linkLabel1.Links[this.linkLabel1.Links.IndexOf(e.Link)].Visited = true;
-            string targetUrl = "https://github.com/Mculover666/SerialAssistant";
-
-
-            try
-            {
-                //尝试用edge打开
-                System.Diagnostics.Process.Start("msedge.exe", targetUrl);
-                return;
-            }
-            catch (Exception)
-            {
-                //edge它不香吗
-            }
-
-            try
-            {
-                //好吧，那用chrome
-                System.Diagnostics.Process.Start("chrome.exe", targetUrl);
-                return;
-            }
-            catch
-            {
-                //chrome不好用吗
-            }
-            try
-            {
-                //IE也不是不可以
-                System.Diagnostics.Process.Start("iexplore.exe", targetUrl);
-            }
-
-            catch
-            {
-                //没救了，砸了吧！
-            }
-        }
 
         private void timer2_Tick(object sender, EventArgs e)
         {
-            button5_Click(button5, new EventArgs());    //调用发送按钮回调函数
+            
         }
 
-        private void checkBox4_CheckedChanged(object sender, EventArgs e)
-        {
-            if (checkBox4.Checked)
-            {
-                //自动发送功能选中,开始自动发送
-                numericUpDown1.Enabled = false;
-                timer2.Interval = (int)numericUpDown1.Value;
-                timer2.Start(); 
-            }
-            else
-            {
-                //自动发送功能未选中,停止自动发送
-                numericUpDown1.Enabled = true;
-                timer2.Stop();
-            }
-        }
 
-        private void button7_Click(object sender, EventArgs e)
-        {
-            string targetUrl = "http://www.mculover666.cn";
 
-            try
-            {
-                //尝试用edge打开
-                System.Diagnostics.Process.Start("msedge.exe", targetUrl);
-                return;
-            }
-            catch (Exception)
-            {
-                //edge它不香吗
-            }
 
-            try
-            {
-                //好吧，那用chrome
-                System.Diagnostics.Process.Start("chrome.exe", targetUrl);
-                return;
-            }
-            catch
-            {
-                //chrome不好用吗
-            }
-            try
-            {
-                //IE也不是不可以
-                System.Diagnostics.Process.Start("iexplore.exe", targetUrl);
-                return;
-            }
 
-            catch
-            {
-                //没救了，砸了吧！
-            }
+        /*                           数据结构
+         *   消息头   升级包序号  固件数据长度  CRC校验低位 CRC校验高位
+         *   2字节      1字节      X（1~256）字节      1字节        2字节
+         * 
+         *   整包数据长度=X+6字节
+         * 
+         */
 
-            /* 没办法了，提示一下 */
-            MessageBox.Show("本软件开源免费，作者:Mculover666!");
-        }
+        //文件
+        private static int response_max_time = 900;   //允许响应的最长时间，超过则认为下位机未响应
+        private static int failed_transmit_cnt = 0;  //发送失败计数
+        private static int update_status = 0;         //0无动作  1发送准备请求  2等待下位机返回准备完成状态 3已接收到完成状态进行升级 4发送完最后一包数据 5升级完成 
+        private static FileStream fs = null;   
+        private static long tx_index = 0;            //发送数据包序号
+        private static long rx_index = 0;            //接收数据包序号
+        private DateTime tx_time = new DateTime();   //发送升级数据时的时间
+        private DateTime rx_time = new DateTime();   //接收到下位机响应的时间
+        private static int rx_flag=0;               //数据接收标志
+        private static long pack_count;              //数据包包数
+        private static int pack_size = 256;          //每包包含的固件数据长度
+        private static int mcu_ready_ok = 0;         //下位机初始化完成
 
-        private void checkBox3_CheckedChanged(object sender, EventArgs e)
-        {
-            if (checkBox3.Checked)
-            {
-                /* 启动定时器 */
-                numericUpDown2.Enabled = false;
-                timer3.Interval = (int)numericUpDown2.Value;
-                timer3.Start();
-            }
-            else
-            {
-                /* 取消时间戳，停止定时器 */
-                numericUpDown2.Enabled = true;
-                timer3.Stop();
-            }
 
-        }
 
+        //10ms运行一次
         private void timer3_Tick(object sender, EventArgs e)
         {
-            /* 设置时间内未收到数据，分包，加入时间戳 */
-            is_need_time = true;
+
+
+            if (update_status == 0)                            //未进行升级
+            {
+                tx_time = System.DateTime.Now;
+                return ;
+            }
+
+            UpdateStatusBox4.Text = update_status.ToString();   //升级状态
+
+            TimeSpan span = (TimeSpan)(DateTime.Now - tx_time); 
+
+            if ( span.Milliseconds > response_max_time)       //超过response_max_time升级失败
+            {
+                failed_transmit_cnt++;
+                if (failed_transmit_cnt > 3)                  //最多允许失败3次，失败会重新发送升级命令
+                {
+                    update_status = 0;
+                    textBox3.AppendText("\r\n 升级失败");
+                }
+                else
+                {
+                    if (update_status == 2)
+                    {
+                        update_status = 1;
+                    }
+                    else if (update_status == 3 && rx_flag == 0)
+                    {
+                        rx_flag = 1;
+                        textBox3.AppendText("\r\nGet MCU Response Failed!");
+                    }
+
+                    textBox3.AppendText("\r\n 尝试第" + failed_transmit_cnt.ToString() + "次重发。");
+                }
+                tx_time = System.DateTime.Now;
+                return ;
+            }
+
+
+            if (update_status == 1)                          //发送准备请求
+            {           
+                UpdateReadyInfoSend(sender, e);
+                update_status = 2;                          //
+            }
+            else if (update_status == 2&& mcu_ready_ok == 1)
+            {
+                textBox3.AppendText("\r\n mcu_ready_ok!\r\n");
+                update_status = 3;
+                rx_flag = 0;
+                mcu_ready_ok = 0;
+
+                UpdateDataSend(sender, e);
+   
+            }
+            else if (update_status == 3&& rx_flag == 1)
+            {
+                rx_flag = 0;
+                UpdateDataSend(sender, e);
+
+            }
+            else if (update_status == 4)         //升级完成
+            {
+                textBox3.AppendText("\r\n 升级完成!");               
+                update_status = 0;
+                MessageBox.Show("升级完成!");
+            }
+
 
         }
+
+
+        OpenFileDialog dialog = new OpenFileDialog();
+        private void OpenFile_Click(object sender, EventArgs e)
+        {
+            /* 弹出文件选择框供用户选择 */
+            //OpenFileDialog dialog = new OpenFileDialog();
+            dialog.Multiselect = false;                     //该值确定是否可以选择多个文件
+            dialog.Title = "请选择要加载的文件(文本格式)";
+            dialog.Filter = "Bin文件(*.bin)|*.bin|文本文件(*.txt)|*.txt";
+            if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+            {
+                FilePath.Text = dialog.FileName;
+                fs = new FileStream(dialog.FileName, FileMode.Open, FileAccess.Read);      //实例化FileStream
+                pack_count = (fs.Length - 1) / pack_size + 1;                             //计算FileStream需要发送多少次  
+                SumPackCount.Text = pack_count.ToString();
+                byte[] bytes = File.ReadAllBytes(dialog.FileName);
+
+                Crc16(bytes, (int)fs.Length);
+                textBox2.Text = "all_crc=" + Crc16(bytes, (int)fs.Length).ToString();
+            }
+            else
+            {
+                return;
+            }
+        }
+
+
+        private void SendFile_Click(object sender, EventArgs e)
+        {
+
+   
+            rx_time = System.DateTime.Now;                          //获取当前时间
+            update_status = 1;
+        }
+
+        private void UpdateReadyInfoSend(object sender, EventArgs e)
+        {
+            mcu_ready_ok = 0;
+            tx_index = 0;
+
+            if (Convert.ToUInt32(MessageHeadBox.Text, 16) > 65535)                    //确认消息头是否合法
+            {
+                MessageBox.Show("消息头范围为 0x0000~0xFFFF", "Error",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            byte[] bArr = new byte[pack_size + 7]; //创建一个Size+7字节的byte[] 其中数据头2字节 序号1字节  数据长度2字节 校验2字节
+            UInt16 date = (UInt16)(Convert.ToUInt32(MessageHeadBox.Text, 16));
+            UInt16 data_len =4;                                     //升级准备数据帧的数据长度
+            bArr[0] = (Byte)((date >> 8) & 0xff);                   //数据头
+            bArr[1] = (Byte)(date & 0xff);                          //数据头
+            bArr[2] = (Byte)(tx_index);                             //消息序号
+            bArr[3] = (Byte)(tx_index);                             //消息序号
+            bArr[4] = (Byte)(data_len & 0xFF);                      //数据长度低位
+            bArr[5] = (Byte)((data_len >> 8) & 0xFF);               //数据长度高位
+            bArr[6] = (Byte)(fs.Length & 0xFF);                      //数据总字节数低位
+            bArr[7] = (Byte)((fs.Length >> 8) & 0xFF);               // 
+            bArr[8] = (Byte)((fs.Length >> 16) & 0xFF);              //
+            bArr[9] = (Byte)((fs.Length >> 24) & 0xFF);              // 数据总字节数高位
+
+            ushort crc_result = Crc16(bArr, data_len + 6);
+            bArr[data_len + 6] = (byte)(crc_result & 0xff);             // CRC
+            bArr[data_len + 7] = (byte)((crc_result >> 8) & 0xff);      //CRC
+
+            serialPort1.Write(bArr, 0, data_len + 8);
+            rx_flag = 0;                                            //数据已经发送
+            tx_time = System.DateTime.Now;                          //获取当前时间
+            textBox3.AppendText("\r\n[" + tx_time.ToString("HH:mm:ss:fff") + "]" + ":发送升级准备消息 " );
+            //extBox3.AppendText("\r\n " +  "CRC="+ crc_result.ToString());
+
+            send_count += bArr.Length;                                   //计数变量累加
+            label7.Text = "发送：" + send_count.ToString() + " Bytes";   //刷新界面
+    
+        }
+
+        private void UpdateDataSend(object sender, EventArgs e)
+        {
+
+
+            if (Convert.ToUInt32(MessageHeadBox.Text, 16) > 65535)                    //确认消息头是否合法
+            {
+                MessageBox.Show("消息头范围为 0x0000~0xFFFF", "Error",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            byte[] bArr = new byte[pack_size + 8]; //创建一个Size+7字节的byte[] 其中数据头2字节 序号1字节  数据长度2字节 校验2字节
+            UInt16 date = (UInt16)(Convert.ToUInt32(MessageHeadBox.Text, 16));
+            UInt16 read_data_len = 0;
+            bArr[0] = (Byte)((date >> 8) & 0xff);//数据头
+            bArr[1] = (Byte)(date & 0xff);       //数据头
+
+            if(failed_transmit_cnt==0)  tx_index++;   //发送失败不会重新发送
+
+            if (tx_index != pack_count+1)            //判断是否最后一次发送数据块
+            {
+
+                bArr[2] = (Byte)(tx_index );            //消息序号从1开始   
+                bArr[3] = (Byte)((tx_index>>8)&0xff);   //消息序号高位
+
+                fs.Position = pack_size * (tx_index-1);                            //更新读取的位置
+                read_data_len = (ushort)fs.Read(bArr, 6, pack_size);              //每次读入size 字节到发送缓存
+                bArr[4] = (Byte)(read_data_len & 0xFF);                      //数据长度低位
+                bArr[5] = (Byte)((read_data_len >> 8) & 0xFF);               //数据长度高位
+
+                ushort crc_result = Crc16(bArr, read_data_len + 6);
+                bArr[read_data_len + 6] = (byte)(crc_result & 0xff);             // CRC
+                bArr[read_data_len + 7] = (byte)((crc_result >> 8) & 0xff);      //CRC
+
+                serialPort1.Write(bArr, 0, read_data_len + 8);
+                rx_flag = 0;
+                tx_time = System.DateTime.Now;                          //获取当前时间
+                textBox3.AppendText("\r\n[" + tx_time.ToString("HH:mm:ss:fff") + "]" + ":发送第 " + tx_index.ToString() + " 包数据");
+                //extBox3.AppendText("\r\n " +  "CRC="+ crc_result.ToString());
+
+                send_count += bArr.Length;                                   //计数变量累加
+                label7.Text = "发送：" + send_count.ToString() + " Bytes";   //刷新界面
+               
+            }
+            else
+            {
+                MessageBox.Show("File Transmit Over!");
+            }
+
+        }
+        private void button7_Click(object sender, EventArgs e)
+        {
+            UpdateDataSend(sender,e);
+        }
+
+        int i =1;
+        private void button4_Click(object sender, EventArgs e)
+        {
+          
+            tx_index = 0;
+            i++;
+            if (i % 2 == 0)
+                timer3.Stop();
+            else
+                timer3.Start();
+        }
+
+
+
+    
+        // Name: CRC-16/MODBUS    x16+x15+x2+1
+        public static ushort Crc16(byte[] buffer, int len )
+        {
+
+            ushort crc = 0xFFFF;// Initial value
+            for (int i = 0; i<len; i++)
+            {
+                crc ^= buffer[i];
+                for (int j = 0; j< 8; j++)
+                {
+                    if ((crc & 1) > 0)
+                        crc = (ushort) ((crc >> 1) ^ 0xA001);// 0xA001 = reverse 0x8005 
+                    else
+                        crc = (ushort) (crc >> 1);
+                }
+            }            
+
+            return crc;
+        }
+ 
+
+   
     }
 }
